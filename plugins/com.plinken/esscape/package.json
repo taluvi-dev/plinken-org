@@ -1,0 +1,11 @@
+{
+  "name": "@plinken/esscape",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Plinken Esscape de-esser (com.plinken)",
+  "scripts": {
+    "build:wasm": "cargo build -p com-plinken-esscape --target wasm32-unknown-unknown --release && mkdir -p dist && cp ../../../target/wasm32-unknown-unknown/release/com_plinken_esscape.wasm dist/esscape.wclap.wasm",
+    "build": "pnpm run build:wasm && node ../../../scripts/bundle-wclap.mjs ."
+  }
+}

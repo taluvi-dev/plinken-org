@@ -23,7 +23,9 @@
 //! paths — allocate in `new()` / `set_sample_rate()` only. Compiles
 //! unchanged for `wasm32-unknown-unknown` and native targets.
 
+pub mod deess;
 pub mod envelope;
+pub mod eq;
 pub mod filter;
 pub mod fx;
 pub mod lfo;

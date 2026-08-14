@@ -1,0 +1,13 @@
+[package]
+name = "com-plinken-esscape"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wclap-plugin = { path = "../../../crates/wclap-plugin", default-features = false }
+plinken-dsp = { path = "../../../crates/plinken-dsp" }

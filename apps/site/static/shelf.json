@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "generatedAt": "2026-07-08T07:48:21.604Z",
+  "generatedAt": "2026-08-14T12:24:41.109Z",
   "items": [
     {
       "id": "com.plinken.auto-pan",
@@ -229,6 +229,45 @@
             "audio-effect",
             "equalizer",
             "eq"
+          ],
+          "has_ui": true
+        }
+      ]
+    },
+    {
+      "id": "com.plinken.esscape",
+      "label": "Plinken: Esscape",
+      "url": "/wclap/com.plinken.esscape.wclap.tar.gz",
+      "vendor": "Plinken",
+      "license": "MIT",
+      "source": "https://github.com/plinken-org/plinken-wclap/tree/main/plugins/com.plinken/esscape",
+      "version": "0.1.0",
+      "description": "Program-adaptive de-esser: relative (dbx 902-style) detection, transparent-at-rest split-band reduction, optional 2 ms lookahead reported as latency. Place before the compressor.",
+      "features": [
+        "audio-effect",
+        "de-esser",
+        "dynamics"
+      ],
+      "homepage": "https://plinken.org",
+      "has_ui": true,
+      "ui": {
+        "compact_size": {
+          "width": 380,
+          "height": 56
+        },
+        "expanded_size": {
+          "width": 660,
+          "height": 400
+        }
+      },
+      "plugins": [
+        {
+          "id": "com.plinken.esscape",
+          "name": "Esscape",
+          "features": [
+            "audio-effect",
+            "de-esser",
+            "dynamics"
           ],
           "has_ui": true
         }

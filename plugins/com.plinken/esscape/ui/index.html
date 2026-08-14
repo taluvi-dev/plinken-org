@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Esscape</title>
+<link rel="stylesheet" href="../widgets/widgets.css">
+<style>
+  .root { width: 100%; height: 100%; display: grid; }
+
+  /* ---- expanded ---- */
+  .root.expanded {
+    grid-template-rows: auto 1fr auto auto;
+    padding: 10px 16px 12px;
+    gap: 8px;
+  }
+  .root.expanded .title { text-align: center; }
+  .displays {
+    display: grid;
+    grid-template-columns: 1fr 110px;
+    gap: 10px;
+    min-height: 0;
+  }
+  .lanes { display: grid; grid-template-rows: 1fr 1.25fr; gap: 6px; min-height: 0; }
+  .canvas-wrap {
+    position: relative;
+    background: var(--bg-deep);
+    border: 1px solid var(--border-soft);
+    border-radius: 2px;
+    overflow: hidden;
+    min-height: 0;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  .side {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 8px; padding-top: 2px;
+  }
+  .side .meters { display: flex; gap: 10px; }
+  .learn {
+    font-family: var(--font-display);
+    font-size: 0.55rem;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    background: var(--bg-deep);
+    border: 1px solid var(--border-soft);
+    border-radius: 3px;
+    padding: 5px 12px;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .learn:hover { color: var(--accent); border-color: var(--accent-deep); }
+  .learn:focus-visible { outline: 1px solid var(--accent); }
+  .learn[data-armed="1"] { color: var(--bg-deep); background: var(--accent-purple); }
+  .controls { display: flex; justify-content: center; gap: 10px; }
+  .switches { display: flex; justify-content: center; gap: 16px; }
+
+  /* ---- compact ---- */
+  .root.compact {
+    grid-template-columns: max-content max-content 1fr max-content;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    --pot-size: 32px;
+    --meter-w: 8px;
+    --meter-h: 36px;
+  }
+  .root.compact .title { font-size: 0.6rem; }
+  .root.compact .displays, .root.compact .controls,
+  .root.compact .switches, .root.compact .side { display: none; }
+  .root.compact .compact-pots { display: flex; gap: 9px; }
+  .root.compact .compact-scope { height: 40px; }
+  .root.compact .pot-label, .root.compact .pot-readout,
+  .root.compact .meter-stack .label, .root.compact .meter-stack .readout { display: none; }
+  .compact-pots, .compact-scope, .compact-gr { display: none; }
+  .root.compact .compact-pots, .root.compact .compact-gr { display: flex; }
+  .root.compact .compact-scope { display: block; }
+</style>
+</head>
+<body>
+<div class="root expanded" id="root">
+  <div class="title">Esscape</div>
+
+  <!-- expanded displays -->
+  <div class="displays">
+    <div class="lanes">
+      <div class="canvas-wrap"><canvas id="scope"></canvas></div>
+      <div class="canvas-wrap"><canvas id="analyser"></canvas></div>
+    </div>
+    <div class="side">
+      <div class="meters">
+        <div id="meter-gr"></div>
+        <div id="meter-peak"></div>
+      </div>
+      <button class="learn" id="learn" type="button">Learn</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div id="ctrl-freq"></div>
+    <div id="ctrl-lp"></div>
+    <div id="ctrl-threshold"></div>
+    <div id="ctrl-range"></div>
+    <div id="ctrl-detection"></div>
+    <div id="ctrl-attack"></div>
+    <div id="ctrl-release"></div>
+    <div id="ctrl-mode"></div>
+    <div id="ctrl-link"></div>
+  </div>
+
+  <div class="switches">
+    <div id="sw-shape"></div>
+    <div id="sw-detect"></div>
+    <div id="sw-lookahead"></div>
+    <div id="sw-monitor"></div>
+  </div>
+
+  <!-- compact-only elements -->
+  <div class="compact-pots">
+    <div id="c-freq"></div>
+    <div id="c-range"></div>
+  </div>
+  <div class="canvas-wrap compact-scope"><canvas id="cscope"></canvas></div>
+  <div class="compact-gr"><div id="c-meter-gr"></div></div>
+</div>
+
+<script type="module">
+  import { Pot } from '../widgets/pot.mjs';
+  import { Meter } from '../widgets/meter.mjs';
+  import { Segment } from '../widgets/segment.mjs';
+  import { Transport } from '../widgets/transport.mjs';
+
+  // Param IDs — must match plugins/com.plinken/esscape/src/lib.rs
+  const PID_FREQ = 0x0001, PID_LP = 0x0002, PID_THRESHOLD = 0x0003;
+  const PID_RANGE = 0x0004, PID_DETECTION = 0x0005, PID_ATTACK = 0x0006;
+  const PID_RELEASE = 0x0007, PID_MODE = 0x0008, PID_SHAPE = 0x0009;
+  const PID_DETECT = 0x000A, PID_LOOKAHEAD = 0x000B, PID_MONITOR = 0x000C;
+  const PID_LINK = 0x000D;
+  const METER_GR = 0x1000, METER_PEAK = 0x1001, METER_EXCESS = 0x1002;
+  const META_SR = 0x1003;
+
+  const BAND_CENTRES = [2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000];
+
+  const transport = new Transport();
+
+  // ---- controls -------------------------------------------------------
+  const hz = v => v >= 9950 ? `${(v / 1000).toFixed(1)}k` : v >= 1000 ? `${(v / 1000).toFixed(2)}k` : `${Math.round(v)}`;
+  const freq = new Pot(document.getElementById('ctrl-freq'),
+    { id: PID_FREQ, min: 2000, max: 16000, default: 6500, log: true, label: 'Freq', format: v => `${hz(v)} Hz` });
+  const lp = new Pot(document.getElementById('ctrl-lp'),
+    { id: PID_LP, min: 4000, max: 20000, default: 20000, log: true, label: 'Lp',
+      format: v => v >= 19999 ? 'OFF' : `${hz(v)} Hz` });
+  const threshold = new Pot(document.getElementById('ctrl-threshold'),
+    { id: PID_THRESHOLD, min: -45, max: 0, default: -14, label: 'Thresh', format: v => `${v.toFixed(1)} dB` });
+  const range = new Pot(document.getElementById('ctrl-range'),
+    { id: PID_RANGE, min: 0, max: 20, default: 8, label: 'Range', format: v => `${v.toFixed(1)} dB` });
+  const detection = new Pot(document.getElementById('ctrl-detection'),
+    { id: PID_DETECTION, min: 0, max: 100, default: 50, label: 'Detect', format: v => `${Math.round(v)}` });
+  const attack = new Pot(document.getElementById('ctrl-attack'),
+    { id: PID_ATTACK, min: 0.2, max: 5, default: 0.8, log: true, label: 'Attack', format: v => `${v.toFixed(1)} ms` });
+  const release = new Pot(document.getElementById('ctrl-release'),
+    { id: PID_RELEASE, min: 10, max: 250, default: 70, log: true, label: 'Release', format: v => `${Math.round(v)} ms` });
+  const mode = new Pot(document.getElementById('ctrl-mode'),
+    { id: PID_MODE, min: 0, max: 100, default: 100, label: 'Mode',
+      format: v => v <= 2 ? 'WIDE' : v >= 98 ? 'SPLIT' : `${Math.round(v)}%` });
+  const link = new Pot(document.getElementById('ctrl-link'),
+    { id: PID_LINK, min: 0, max: 100, default: 100, label: 'Link', format: v => `${Math.round(v)}%` });
+
+  const shape = new Segment(document.getElementById('sw-shape'),
+    { id: PID_SHAPE, options: ['Shelf', 'Bell'], default: 0, label: 'Shape' });
+  const detect = new Segment(document.getElementById('sw-detect'),
+    { id: PID_DETECT, options: ['Rel', 'Abs'], default: 0, label: 'Detect' });
+  const lookahead = new Segment(document.getElementById('sw-lookahead'),
+    { id: PID_LOOKAHEAD, options: ['Off', '2 ms'], default: 0, label: 'Lookahead' });
+  const monitor = new Segment(document.getElementById('sw-monitor'),
+    { id: PID_MONITOR, options: ['Out', 'SC', 'Δ'], default: 0, label: 'Monitor' });
+
+  // Compact mirrors of Freq + Range: same param ids, second widget instance.
+  const cFreq = new Pot(document.getElementById('c-freq'),
+    { id: PID_FREQ, min: 2000, max: 16000, default: 6500, log: true, label: 'Freq' });
+  const cRange = new Pot(document.getElementById('c-range'),
+    { id: PID_RANGE, min: 0, max: 20, default: 8, label: 'Range' });
+
+  const gr = new Meter(document.getElementById('meter-gr'),
+    { mode: 'gr', minDb: -20, maxDb: 0, label: 'GR' });
+  const peak = new Meter(document.getElementById('meter-peak'),
+    { mode: 'peak', minDb: -60, maxDb: 0, hotDb: -6, clipDb: -0.5, label: 'Out' });
+  const cGr = new Meter(document.getElementById('c-meter-gr'),
+    { mode: 'gr', minDb: -20, maxDb: 0, label: 'GR' });
+  gr.setDb(0); peak.setDb(-Infinity); cGr.setDb(0);
+
+  // Widget groups sharing a param id both update and both send.
+  const widgets = new Map([
+    [PID_FREQ, [freq, cFreq]], [PID_LP, [lp]], [PID_THRESHOLD, [threshold]],
+    [PID_RANGE, [range, cRange]], [PID_DETECTION, [detection]],
+    [PID_ATTACK, [attack]], [PID_RELEASE, [release]], [PID_MODE, [mode]],
+    [PID_SHAPE, [shape]], [PID_DETECT, [detect]], [PID_LOOKAHEAD, [lookahead]],
+    [PID_MONITOR, [monitor]], [PID_LINK, [link]],
+  ]);
+  for (const [id, group] of widgets) {
+    for (const w of group) {
+      w.onChange(v => {
+        transport.sendSet(id, v);
+        for (const other of group) if (other !== w) other.setValueFromHost(v);
+        if (id === PID_FREQ || id === PID_LP || id === PID_RANGE ||
+            id === PID_MODE || id === PID_SHAPE) drawAnalyser();
+      });
+    }
+  }
+
+  // ---- incoming state -------------------------------------------------
+  let sampleRate = 48000;
+  let curGrDb = 0;        // negative dB from the meter stream
+  let curExcess = -60;
+
+  transport.onSnapshot(params => {
+    for (const [id, value] of params) {
+      const group = widgets.get(id);
+      if (group) { for (const w of group) w.setValueFromHost(value); continue; }
+      if (id === METER_GR) {
+        curGrDb = value;
+        gr.setDb(value); cGr.setDb(value);
+      } else if (id === METER_PEAK) peak.setDb(value);
+      else if (id === METER_EXCESS) curExcess = value;
+      else if (id === META_SR) sampleRate = value;
+    }
+    drawAnalyser();
+  });
+
+  // Band frames arrive on the shared "spec" channel.
+  let bandsDb = new Float32Array(10).fill(-90);
+  const essEnergy = new Float32Array(10);
+  const quietEnergy = new Float32Array(10);
+  transport.onSpectrum(frame => {
+    bandsDb = frame;
+    // Ess-weight bookkeeping for LEARN: frames where the reducer is
+    // working count toward the "ess" profile, others toward baseline.
+    const active = curGrDb < -1.0;
+    for (let i = 0; i < 10; i++) {
+      const lin = Math.pow(10, frame[i] / 20);
+      if (active) essEnergy[i] = essEnergy[i] * 0.95 + lin * 0.05;
+      else quietEnergy[i] = quietEnergy[i] * 0.98 + lin * 0.02;
+    }
+    drawAnalyser();
+  });
+
+  // Scope buckets on the custom "scop" channel: interleaved
+  // (in-peak dBFS, gr dB) f32 pairs.
+  const SCOPE_LEN = 480;
+  const scopePeak = new Float32Array(SCOPE_LEN).fill(-90);
+  const scopeGr = new Float32Array(SCOPE_LEN);
+  let scopeHead = 0;
+  window.addEventListener('message', ev => {
+    const ab = ev.data;
+    if (!(ab instanceof ArrayBuffer)) return;
+    const v = new DataView(ab);
+    // {"scop": bytes} — map(1), text(4) "scop", bytes u16-length.
+    if (ab.byteLength < 9 || v.getUint8(0) !== 0xa1 || v.getUint8(1) !== 0x64) return;
+    if (v.getUint8(2) !== 0x73 || v.getUint8(3) !== 0x63 ||
+        v.getUint8(4) !== 0x6f || v.getUint8(5) !== 0x70) return;
+    if (v.getUint8(6) !== 0x59) return;
+    const len = v.getUint16(7, false);
+    if (9 + len > ab.byteLength || len % 8 !== 0) return;
+    for (let p = 9; p + 8 <= 9 + len; p += 8) {
+      scopePeak[scopeHead] = v.getFloat32(p, false);
+      scopeGr[scopeHead] = v.getFloat32(p + 4, false);
+      scopeHead = (scopeHead + 1) % SCOPE_LEN;
+    }
+    drawScope();
+  });
+
+  transport.sendReady();
+
+  // ---- canvases -------------------------------------------------------
+  const scopeCv = document.getElementById('scope');
+  const anaCv = document.getElementById('analyser');
+  const cScopeCv = document.getElementById('cscope');
+
+  function fit(cv) {
+    const dpr = window.devicePixelRatio || 1;
+    const r = cv.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return null;
+    const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { g, w: r.width, h: r.height };
+  }
+
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawScope() {
+    for (const cv of [scopeCv, cScopeCv]) {
+      const ctx = fit(cv);
+      if (!ctx) continue;
+      const { g, w, h } = ctx;
+      g.clearRect(0, 0, w, h);
+      const grLane = h * 0.32;              // top lane: GR hanging from 0
+      const waveMid = grLane + (h - grLane) / 2;
+      const grScale = grLane / 20;          // 20 dB full lane
+      const n = Math.min(SCOPE_LEN, Math.floor(w));
+      g.strokeStyle = css('--border-soft');
+      g.lineWidth = 1;
+      g.beginPath(); g.moveTo(0, 1); g.lineTo(w, 1); g.stroke();
+
+      // waveform bars, amber where the reducer was active
+      for (let i = 0; i < n; i++) {
+        const idx = (scopeHead - n + i + SCOPE_LEN) % SCOPE_LEN;
+        const db = scopePeak[idx];
+        const amp = Math.max(0, (db + 60) / 60);      // −60..0 dB → 0..1
+        const half = amp * (h - grLane) * 0.5;
+        const active = scopeGr[idx] > 0.5;
+        g.fillStyle = active ? css('--meter-fill-gr') : css('--accent-deep');
+        g.globalAlpha = active ? 0.95 : 0.55;
+        g.fillRect(i * (w / n), waveMid - half, Math.max(1, w / n), half * 2 || 1);
+      }
+      g.globalAlpha = 1;
+
+      // GR trace
+      g.strokeStyle = css('--meter-fill-gr');
+      g.lineWidth = 1.2;
+      g.beginPath();
+      for (let i = 0; i < n; i++) {
+        const idx = (scopeHead - n + i + SCOPE_LEN) % SCOPE_LEN;
+        const y = 1 + Math.min(grLane, scopeGr[idx] * grScale);
+        if (i === 0) g.moveTo(i * (w / n), y); else g.lineTo(i * (w / n), y);
+      }
+      g.stroke();
+    }
+  }
+
+  // Complex response of the live shaper at the current settings.
+  function shaperDb(f, grDb) {
+    const m = mode.value / 100;
+    const wideDb = -grDb * (1 - m);
+    const splitDb = grDb * m;
+    const K = Math.pow(10, -splitDb / 20);
+    const w = 2 * Math.PI * f / sampleRate;
+    let mag;
+    if (shape.value === 0) {
+      // two cascaded RM shelves at sqrt(K)
+      const w0 = 2 * Math.PI * Math.min(freq.value, sampleRate * 0.45) / sampleRate;
+      const t = Math.tan(w0 / 2), a = (t - 1) / (t + 1);
+      const cw = Math.cos(w), sw = Math.sin(w);
+      // A1(e^-jw) = (a + e^-jw)/(1 + a e^-jw)
+      const nr = a + cw, ni = -sw, dr = 1 + a * cw, di = -a * sw;
+      const dd = dr * dr + di * di;
+      const ar = (nr * dr + ni * di) / dd, ai = (ni * dr - nr * di) / dd;
+      const kh = Math.sqrt(K);
+      const m0 = (1 + kh) / 2, m1 = (1 - kh) / 2;
+      const hr = m0 + m1 * ar, hi = m1 * ai;
+      mag = hr * hr + hi * hi;               // one stage squared → two stages
+    } else {
+      const lpv = lp.value >= 19999 ? freq.value * 1.414 : Math.max(lp.value, freq.value * 1.25);
+      const centre = Math.sqrt(freq.value * lpv);
+      const octaves = Math.max(0.3, Math.log2(lpv / freq.value));
+      const q = Math.min(8, Math.max(1, 2 / octaves));
+      const w0 = 2 * Math.PI * Math.min(centre, sampleRate * 0.45) / sampleRate;
+      const wb = Math.min(Math.PI * 0.98, Math.max(1e-4, w0 / q));
+      const tb = Math.tan(wb / 2);
+      const c = (tb - 1) / (tb + 1), d = -Math.cos(w0);
+      const e = d * (1 - c);
+      const cw = Math.cos(w), sw = Math.sin(w);
+      const c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+      const nr = -c + e * cw + c2, ni = -e * sw - s2;
+      const dr = 1 + e * cw - c * c2, di = -e * sw + c * s2;
+      const dd = dr * dr + di * di;
+      const ar = (nr * dr + ni * di) / dd, ai = (ni * dr - nr * di) / dd;
+      const m0 = (1 + K) / 2, m1 = (1 - K) / 2;
+      const hr = m0 + m1 * ar, hi = m1 * ai;
+      mag = Math.sqrt(hr * hr + hi * hi);
+      return 20 * Math.log10(mag) - wideDb;
+    }
+    return 10 * Math.log10(mag) - wideDb;    // shelf: mag was one-stage², ×2 stages in dB
+  }
+
+  const FMIN = 1000, FMAX = 20000, DBMIN = -24;
+  const xOf = (f, w) => (Math.log(f / FMIN) / Math.log(FMAX / FMIN)) * w;
+  const yOf = (db, h) => (db / DBMIN) * (h - 14) + 2;
+
+  let attenHold = 0, attenHoldAt = 0;
+  let dragging = null;
+
+  function drawAnalyser() {
+    const ctx = fit(anaCv);
+    if (!ctx) return;
+    const { g, w, h } = ctx;
+    g.clearRect(0, 0, w, h);
+    const grNow = -curGrDb;   // positive dB of reduction
+
+    // grid + labels
+    g.font = '9px "Courier Prime", monospace';
+    g.fillStyle = css('--text-dim');
+    g.strokeStyle = css('--border-soft');
+    g.lineWidth = 0.5;
+    for (const f of [1000, 2000, 5000, 10000, 20000]) {
+      const x = xOf(f, w);
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h - 12); g.stroke();
+      g.fillText(f >= 1000 ? `${f / 1000}k` : f, x + 2, h - 3);
+    }
+    for (const db of [0, -6, -12, -18]) {
+      const y = yOf(db, h);
+      g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+    }
+
+    // ess-profile bars: height = level, colour weight = ess ratio
+    const bw = w / 34;
+    for (let i = 0; i < 10; i++) {
+      const x = xOf(BAND_CENTRES[i], w) - bw / 2;
+      const lvl = Math.max(0, (bandsDb[i] + 70) / 70);
+      const ratio = essEnergy[i] / (quietEnergy[i] + 1e-9);
+      const hot = Math.max(0, Math.min(1, (ratio - 1) / 4));
+      const bh = lvl * (h - 16);
+      g.fillStyle = hot > 0.4 ? css('--meter-fill-gr') : css('--accent-deep');
+      g.globalAlpha = 0.25 + 0.5 * Math.max(lvl > 0 ? 0.2 : 0, hot);
+      g.fillRect(x, h - 14 - bh, bw, bh);
+    }
+    g.globalAlpha = 1;
+
+    // Range ceiling shading: region the live curve can never leave.
+    g.fillStyle = css('--accent-purple');
+    g.globalAlpha = 0.13;
+    g.beginPath();
+    g.moveTo(0, yOf(0, h));
+    for (let px = 0; px <= w; px += 3) {
+      const f = FMIN * Math.pow(FMAX / FMIN, px / w);
+      g.lineTo(px, yOf(shaperDb(f, range.value), h));
+    }
+    g.lineTo(w, yOf(0, h));
+    g.closePath();
+    g.fill();
+    g.globalAlpha = 1;
+
+    // live attenuation curve
+    g.strokeStyle = css('--meter-fill-gr');
+    g.lineWidth = 1.5;
+    g.beginPath();
+    for (let px = 0; px <= w; px += 2) {
+      const f = FMIN * Math.pow(FMAX / FMIN, px / w);
+      const y = yOf(Math.max(DBMIN, shaperDb(f, grNow)), h);
+      if (px === 0) g.moveTo(px, y); else g.lineTo(px, y);
+    }
+    g.stroke();
+
+    // HP / LP handles
+    for (const [pot, lab] of [[freq, 'HP'], [lp, 'LP']]) {
+      if (pot === lp && lp.value >= 19999) continue;
+      const x = xOf(pot.value, w);
+      g.strokeStyle = css('--accent');
+      g.lineWidth = dragging === pot ? 2 : 1;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h - 12); g.stroke();
+      g.fillStyle = css('--accent');
+      g.fillText(lab, x + 3, 10);
+    }
+
+    // attenuation peak-hold
+    const now = performance.now();
+    if (grNow > attenHold || now - attenHoldAt > 3000) { attenHold = grNow; attenHoldAt = now; }
+    if (attenHold > 0.1) {
+      g.fillStyle = css('--meter-fill-gr');
+      g.fillText(`Atten: −${attenHold.toFixed(1)} dB`, 6, 10);
+    }
+  }
+
+  // Drag the HP/LP handles.
+  anaCv.addEventListener('pointerdown', ev => {
+    const r = anaCv.getBoundingClientRect();
+    const x = ev.clientX - r.left;
+    const dHp = Math.abs(x - xOf(freq.value, r.width));
+    const dLp = lp.value >= 19999 ? 1e9 : Math.abs(x - xOf(lp.value, r.width));
+    if (Math.min(dHp, dLp) < 14) {
+      dragging = dHp <= dLp ? freq : lp;
+      anaCv.setPointerCapture(ev.pointerId);
+    } else if (attenHold > 0) {
+      attenHold = 0;   // click anywhere: clear peak-hold
+    }
+  });
+  anaCv.addEventListener('pointermove', ev => {
+    if (!dragging) return;
+    const r = anaCv.getBoundingClientRect();
+    const f = FMIN * Math.pow(FMAX / FMIN, Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)));
+    const clamped = dragging === freq
+      ? Math.max(2000, Math.min(16000, f))
+      : Math.max(4000, Math.min(20000, f));
+    dragging.setValueFromHost(clamped);
+    transport.sendSet(dragging.id, clamped);
+    drawAnalyser();
+  });
+  anaCv.addEventListener('pointerup', () => { dragging = null; drawAnalyser(); });
+
+  // LEARN: put Freq at the bottom edge of the band the reducer keeps
+  // catching (ess energy vs. baseline, argmax ratio).
+  document.getElementById('learn').addEventListener('click', () => {
+    let best = -1, bestRatio = 0;
+    for (let i = 0; i < 10; i++) {
+      const ratio = essEnergy[i] / (quietEnergy[i] + 1e-9);
+      if (ratio > bestRatio) { bestRatio = ratio; best = i; }
+    }
+    const btn = document.getElementById('learn');
+    if (best < 0 || bestRatio < 1.2) {
+      btn.dataset.armed = '0';
+      return;   // nothing learned yet — play material through it first
+    }
+    const target = Math.max(2000, Math.min(16000, BAND_CENTRES[best] / 1.2));
+    freq.setValueFromHost(target);
+    cFreq.setValueFromHost(target);
+    transport.sendSet(PID_FREQ, target);
+    btn.dataset.armed = '1';
+    setTimeout(() => { btn.dataset.armed = '0'; }, 600);
+    drawAnalyser();
+  });
+
+  // ---- layout ---------------------------------------------------------
+  function applyLayout() {
+    const root = document.getElementById('root');
+    const compact = window.innerWidth < 420 || window.innerHeight < 120;
+    root.classList.toggle('compact', compact);
+    root.classList.toggle('expanded', !compact);
+    drawScope();
+    drawAnalyser();
+  }
+  applyLayout();
+  window.addEventListener('resize', applyLayout);
+</script>
+</body>
+</html>

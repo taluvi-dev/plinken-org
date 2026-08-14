@@ -11,6 +11,7 @@ members = [
     "plugins/com.plinken/compressor",
     "plugins/com.plinken/delay",
     "plugins/com.plinken/eq",
+    "plugins/com.plinken/esscape",
     "plugins/com.plinken/pulze",
     "plugins/com.plinken/reverb",
     "plugins/com.plinken/saturator",

@@ -87,6 +87,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "com-plinken-esscape"
+version = "0.1.0"
+dependencies = [
+ "plinken-dsp",
+ "wclap-plugin",
+]
+
+[[package]]
 name = "com-plinken-pulze"
 version = "0.1.3"
 dependencies = [

@@ -1,0 +1,41 @@
+{
+  "manifest_version": 1,
+  "id": "com.plinken.esscape",
+  "name": "Esscape",
+  "vendor": "Plinken",
+  "version": "0.1.0",
+  "description": "Program-adaptive de-esser: relative (dbx 902-style) detection, transparent-at-rest split-band reduction, optional 2 ms lookahead reported as latency. Place before the compressor.",
+  "features": [
+    "audio-effect",
+    "de-esser",
+    "dynamics"
+  ],
+  "license": "MIT",
+  "homepage": "https://plinken.org",
+  "source": "src/",
+  "artifact": "dist/esscape.wclap.tar.gz",
+  "format": "tar.gz",
+  "has_ui": true,
+  "ui": {
+    "compact_size": {
+      "width": 380,
+      "height": 56
+    },
+    "expanded_size": {
+      "width": 660,
+      "height": 400
+    }
+  },
+  "plugins": [
+    {
+      "id": "com.plinken.esscape",
+      "name": "Esscape",
+      "features": [
+        "audio-effect",
+        "de-esser",
+        "dynamics"
+      ],
+      "has_ui": true
+    }
+  ]
+}
